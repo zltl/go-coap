@@ -3,3 +3,8 @@
 /example/server/server
 /example/subserver/subserver
 /example/client/client
+/example/client/goap_client
+/example/obsclient/obsclient
+/example/obsserver/obsserver
+/example/server/coap_server
+
