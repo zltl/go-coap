@@ -10,6 +10,22 @@ import (
 	"strings"
 )
 
+const (
+	DefaultAckTimeout      = 2
+	DefaultAckRandomFactor = 1.5
+	DefaultMaxRetransmit   = 4
+	DefaultNStart          = 1
+	DefaultLeisure         = 5
+	DefaultProbingRate     = 1
+
+	DefaultHost  = ""
+	DefaultPort  = 5683
+	SDefaultPort = 5684
+
+	PayloadMarker = 0xff
+	MaxPacketSize = 1500
+)
+
 // COAPType represents the message type.
 type COAPType uint8
 
@@ -46,65 +62,73 @@ func (t COAPType) String() string {
 // COAPCode is the type used for both request and response codes.
 type COAPCode uint8
 
-// Request Codes
 const (
+	// Request Codes
+
 	GET    COAPCode = 1
 	POST   COAPCode = 2
 	PUT    COAPCode = 3
 	DELETE COAPCode = 4
-)
 
-// Response Codes
-const (
-	Created               COAPCode = 65
-	Deleted               COAPCode = 66
-	Valid                 COAPCode = 67
-	Changed               COAPCode = 68
-	Content               COAPCode = 69
-	BadRequest            COAPCode = 128
-	Unauthorized          COAPCode = 129
-	BadOption             COAPCode = 130
-	Forbidden             COAPCode = 131
-	NotFound              COAPCode = 132
-	MethodNotAllowed      COAPCode = 133
-	NotAcceptable         COAPCode = 134
-	PreconditionFailed    COAPCode = 140
-	RequestEntityTooLarge COAPCode = 141
-	UnsupportedMediaType  COAPCode = 143
-	InternalServerError   COAPCode = 160
-	NotImplemented        COAPCode = 161
-	BadGateway            COAPCode = 162
-	ServiceUnavailable    COAPCode = 163
-	GatewayTimeout        COAPCode = 164
-	ProxyingNotSupported  COAPCode = 165
+	// Response Codes
+
+	Empty    COAPCode = 0
+	Created  COAPCode = 65 // 2.01
+	Deleted  COAPCode = 66 // 2.02
+	Valid    COAPCode = 67 // 2.03
+	Changed  COAPCode = 68 // 2.04
+	Content  COAPCode = 69 // 2.05
+	Continue COAPCode = 95 // 2.31
+
+	// 4.x
+	BadRequest               COAPCode = 128 // 4.00
+	Unauthorized             COAPCode = 129 // 4.01
+	BadOption                COAPCode = 130 // 4.02
+	Forbidden                COAPCode = 131 // 4.03
+	NotFound                 COAPCode = 132 // 4.04
+	MethodNotAllowed         COAPCode = 133 // 4.05
+	NotAcceptable            COAPCode = 134 // 4.06
+	RequestEntityIncomplete  COAPCode = 136 // 4.08
+	Conflict                 COAPCode = 137 // 4.09
+	PreconditionFailed       COAPCode = 140 // 4.12
+	RequestEntityTooLarge    COAPCode = 141 // 4.13
+	UnsupportedContentFormat COAPCode = 143 // 4.15
+
+	// 5.x
+	InternalServerError  COAPCode = 160 // 5.00
+	NotImplemented       COAPCode = 161 // 5.01
+	BadGateway           COAPCode = 162 // 5.02
+	ServiceUnavailable   COAPCode = 163 // 5.03
+	GatewayTimeout       COAPCode = 164 // 5.04
+	ProxyingNotSupported COAPCode = 165 // 5.05
 )
 
 var codeNames = [256]string{
-	GET:                   "GET",
-	POST:                  "POST",
-	PUT:                   "PUT",
-	DELETE:                "DELETE",
-	Created:               "Created",
-	Deleted:               "Deleted",
-	Valid:                 "Valid",
-	Changed:               "Changed",
-	Content:               "Content",
-	BadRequest:            "BadRequest",
-	Unauthorized:          "Unauthorized",
-	BadOption:             "BadOption",
-	Forbidden:             "Forbidden",
-	NotFound:              "NotFound",
-	MethodNotAllowed:      "MethodNotAllowed",
-	NotAcceptable:         "NotAcceptable",
-	PreconditionFailed:    "PreconditionFailed",
-	RequestEntityTooLarge: "RequestEntityTooLarge",
-	UnsupportedMediaType:  "UnsupportedMediaType",
-	InternalServerError:   "InternalServerError",
-	NotImplemented:        "NotImplemented",
-	BadGateway:            "BadGateway",
-	ServiceUnavailable:    "ServiceUnavailable",
-	GatewayTimeout:        "GatewayTimeout",
-	ProxyingNotSupported:  "ProxyingNotSupported",
+	GET:                      "GET",
+	POST:                     "POST",
+	PUT:                      "PUT",
+	DELETE:                   "DELETE",
+	Created:                  "Created",
+	Deleted:                  "Deleted",
+	Valid:                    "Valid",
+	Changed:                  "Changed",
+	Content:                  "Content",
+	BadRequest:               "BadRequest",
+	Unauthorized:             "Unauthorized",
+	BadOption:                "BadOption",
+	Forbidden:                "Forbidden",
+	NotFound:                 "NotFound",
+	MethodNotAllowed:         "MethodNotAllowed",
+	NotAcceptable:            "NotAcceptable",
+	PreconditionFailed:       "PreconditionFailed",
+	RequestEntityTooLarge:    "RequestEntityTooLarge",
+	UnsupportedContentFormat: "UnsupportedContentFormat",
+	InternalServerError:      "InternalServerError",
+	NotImplemented:           "NotImplemented",
+	BadGateway:               "BadGateway",
+	ServiceUnavailable:       "ServiceUnavailable",
+	GatewayTimeout:           "GatewayTimeout",
+	ProxyingNotSupported:     "ProxyingNotSupported",
 }
 
 func init() {
@@ -121,36 +145,42 @@ func (c COAPCode) String() string {
 
 // Message encoding errors.
 var (
-	ErrInvalidTokenLen   = errors.New("invalid token length")
-	ErrOptionTooLong     = errors.New("option is too long")
-	ErrOptionGapTooLarge = errors.New("option gap too large")
+	ErrInvalidTokenLen     = errors.New("invalid token length")
+	ErrOptionTooLong       = errors.New("option is too long")
+	ErrOptionGapTooLarge   = errors.New("option gap too large")
+	ErrShortPacket         = errors.New("short packet")
+	ErrInvalidVersion      = errors.New("invalid version")
+	ErrTruncated           = errors.New("truncated")
+	ErrInvalidOptionMarker = errors.New("unexpected extended option marker")
 )
 
 // OptionID identifies an option in a message.
 type OptionID uint8
 
 /*
-   +-----+----+---+---+---+----------------+--------+--------+---------+
-   | No. | C  | U | N | R | Name           | Format | Length | Default |
-   +-----+----+---+---+---+----------------+--------+--------+---------+
-   |   1 | x  |   |   | x | If-Match       | opaque | 0-8    | (none)  |
-   |   3 | x  | x | - |   | Uri-Host       | string | 1-255  | (see    |
-   |     |    |   |   |   |                |        |        | below)  |
-   |   4 |    |   |   | x | ETag           | opaque | 1-8    | (none)  |
-   |   5 | x  |   |   |   | If-None-Match  | empty  | 0      | (none)  |
-   |   7 | x  | x | - |   | Uri-Port       | uint   | 0-2    | (see    |
-   |     |    |   |   |   |                |        |        | below)  |
-   |   8 |    |   |   | x | Location-Path  | string | 0-255  | (none)  |
-   |  11 | x  | x | - | x | Uri-Path       | string | 0-255  | (none)  |
-   |  12 |    |   |   |   | Content-Format | uint   | 0-2    | (none)  |
-   |  14 |    | x | - |   | Max-Age        | uint   | 0-4    | 60      |
-   |  15 | x  | x | - | x | Uri-Query      | string | 0-255  | (none)  |
-   |  17 | x  |   |   |   | Accept         | uint   | 0-2    | (none)  |
-   |  20 |    |   |   | x | Location-Query | string | 0-255  | (none)  |
-   |  35 | x  | x | - |   | Proxy-Uri      | string | 1-1034 | (none)  |
-   |  39 | x  | x | - |   | Proxy-Scheme   | string | 1-255  | (none)  |
-   |  60 |    |   | x |   | Size1          | uint   | 0-4    | (none)  |
-   +-----+----+---+---+---+----------------+--------+--------+---------+
+   +-----+----+---+---+---+----------------+--------+--------+-------------+
+   | No. | C  | U | N | R | Name           | Format | Length | Default     |
+   +-----+----+---+---+---+----------------+--------+--------+-------------+
+   |   1 | x  |   |   | x | If-Match       | opaque | 0-8    | (none)      |
+   |   3 | x  | x | - |   | Uri-Host       | string | 1-255  | (see below) |
+   |   4 |    |   |   | x | ETag           | opaque | 1-8    | (none)      |
+   |   5 | x  |   |   |   | If-None-Match  | empty  | 0      | (none)      |
+   |   6 |    | x | - |   | Observe        | uint   | 0-3    | (none)      |
+   |   7 | x  | x | - |   | Uri-Port       | uint   | 0-2    | (see below) |
+   |   8 |    |   |   | x | Location-Path  | string | 0-255  | (none)      |
+   |  11 | x  | x | - | x | Uri-Path       | string | 0-255  | (none)      |
+   |  12 |    |   |   |   | Content-Format | uint   | 0-2    | (none)      |
+   |  14 |    | x | - |   | Max-Age        | uint   | 0-4    | 60          |
+   |  15 | x  | x | - | x | Uri-Query      | string | 0-255  | (none)      |
+   |  17 | x  |   |   |   | Accept         | uint   | 0-2    | (none)      |
+   |  20 |    |   |   | x | Location-Query | string | 0-255  | (none)      |
+   |  23 |    |   | - | - | Block2         | uint   | 0-3    | (none)      |
+   |  27 |    |   | - | - | Block1         | uint   | 0-3    | (none)      |
+   |  28 |    |   | x |   | Size2          | uint   | 0-4    | (none)      |
+   |  35 | x  | x | - |   | Proxy-Uri      | string | 1-1034 | (none)      |
+   |  39 | x  | x | - |   | Proxy-Scheme   | string | 1-255  | (none)      |
+   |  60 |    |   | x |   | Size1          | uint   | 0-4    | (none)      |
+   +-----+----+---+---+---+----------------+--------+--------+-------------+
 */
 
 // Option IDs.
@@ -168,6 +198,9 @@ const (
 	URIQuery      OptionID = 15
 	Accept        OptionID = 17
 	LocationQuery OptionID = 20
+	Block2        OptionID = 23
+	Block1        OptionID = 27
+	Size2         OptionID = 28
 	ProxyURI      OptionID = 35
 	ProxyScheme   OptionID = 39
 	Size1         OptionID = 60
@@ -204,6 +237,9 @@ var optionDefs = [256]optionDef{
 	URIQuery:      optionDef{valueFormat: valueString, minLen: 0, maxLen: 255},
 	Accept:        optionDef{valueFormat: valueUint, minLen: 0, maxLen: 2},
 	LocationQuery: optionDef{valueFormat: valueString, minLen: 0, maxLen: 255},
+	Block2:        optionDef{valueFormat: valueUint, minLen: 0, maxLen: 3},
+	Block1:        optionDef{valueFormat: valueUint, minLen: 0, maxLen: 3},
+	Size2:         optionDef{valueFormat: valueUint, minLen: 0, maxLen: 4},
 	ProxyURI:      optionDef{valueFormat: valueString, minLen: 1, maxLen: 1034},
 	ProxyScheme:   optionDef{valueFormat: valueString, minLen: 1, maxLen: 255},
 	Size1:         optionDef{valueFormat: valueUint, minLen: 0, maxLen: 4},
@@ -225,6 +261,14 @@ const (
 type option struct {
 	ID    OptionID
 	Value interface{}
+}
+
+func EncodeBlock(NUM, M, SZX uint32) uint32 {
+	return NUM<<4 | M<<3 | SZX
+}
+
+func DecodeBlock(n uint32) (NUM, M, SZX uint32) {
+	return n >> 4, (n >> 3) & 1, n & 7
 }
 
 func encodeInt(v uint32) []byte {
@@ -538,7 +582,7 @@ func (m *Message) MarshalBinary() ([]byte, error) {
 	}
 
 	if len(m.Payload) > 0 {
-		buf.Write([]byte{0xff})
+		buf.Write([]byte{PayloadMarker})
 	}
 
 	buf.Write(m.Payload)
@@ -555,11 +599,11 @@ func ParseMessage(data []byte) (Message, error) {
 // UnmarshalBinary parses the given binary slice as a Message.
 func (m *Message) UnmarshalBinary(data []byte) error {
 	if len(data) < 4 {
-		return errors.New("short packet")
+		return ErrShortPacket
 	}
 
 	if data[0]>>6 != 1 {
-		return errors.New("invalid version")
+		return ErrInvalidVersion
 	}
 
 	m.Type = COAPType((data[0] >> 4) & 0x3)
@@ -575,7 +619,7 @@ func (m *Message) UnmarshalBinary(data []byte) error {
 		m.Token = make([]byte, tokenLen)
 	}
 	if len(data) < 4+tokenLen {
-		return errors.New("truncated")
+		return ErrTruncated
 	}
 	copy(m.Token, data[4:4+tokenLen])
 	b := data[4+tokenLen:]
@@ -585,13 +629,13 @@ func (m *Message) UnmarshalBinary(data []byte) error {
 		switch opt {
 		case extoptByteCode:
 			if len(b) < 1 {
-				return -1, errors.New("truncated")
+				return -1, ErrTruncated
 			}
 			opt = int(b[0]) + extoptByteAddend
 			b = b[1:]
 		case extoptWordCode:
 			if len(b) < 2 {
-				return -1, errors.New("truncated")
+				return -1, ErrTruncated
 			}
 			opt = int(binary.BigEndian.Uint16(b[:2])) + extoptWordAddend
 			b = b[2:]
@@ -600,7 +644,7 @@ func (m *Message) UnmarshalBinary(data []byte) error {
 	}
 
 	for len(b) > 0 {
-		if b[0] == 0xff {
+		if b[0] == PayloadMarker {
 			b = b[1:]
 			break
 		}
@@ -609,7 +653,7 @@ func (m *Message) UnmarshalBinary(data []byte) error {
 		length := int(b[0] & 0x0f)
 
 		if delta == extoptError || length == extoptError {
-			return errors.New("unexpected extended option marker")
+			return ErrInvalidOptionMarker
 		}
 
 		b = b[1:]
@@ -624,7 +668,7 @@ func (m *Message) UnmarshalBinary(data []byte) error {
 		}
 
 		if len(b) < length {
-			return errors.New("truncated")
+			return ErrTruncated
 		}
 
 		oid := OptionID(prev + delta)
