@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/dustin/go-coap"
+	"github.com/zltl/go-coap"
 )
 
 func main() {

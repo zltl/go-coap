@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/dustin/go-coap"
+	"github.com/zltl/go-coap"
 )
 
 func periodicTransmitter(l *net.UDPConn, a *net.UDPAddr, m *coap.Message) {
